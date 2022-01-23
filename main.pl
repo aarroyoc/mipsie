@@ -1,7 +1,10 @@
+:- use_module(library(dif)).
 :- use_module(library(lists)).
 :- use_module(library(charsio)).
 :- use_module(library(dcgs)).
 :- use_module(library(pio)).
+:- use_module(library(format)).
+
 
 run_mips(Filename, EndMipsState) :-
     parse(Filename, MipsCode, MipsState),
@@ -21,22 +24,24 @@ mips_asm([], mips_state(R, 0)) -->
     [].
 
 mips_instruction(add(Rd, Rs, Rt)) -->
-    "\tadd ",
+    "\tadd",
+    whites,
     register(Rd),
-    ",",
+    comma,
     register(Rs),
-    ",",
+    comma,
     register(Rt),
-    "\n".
+    end_line.
 
 mips_instruction(addi(Rt, Rs, I)) -->
-    "\taddi ",
+    "\taddi",
+    whites,
     register(Rt),
-    ",",
+    comma,
     register(Rs),
-    ",",
+    comma,
     number(I),
-    "\n".
+    end_line.
 
 number(D) -->
     number_(Ds),
@@ -49,6 +54,23 @@ number_([D]) --> digit(D).
 
 digit(D) --> [D], { char_type(D, decimal_digit) }.
 
+comma -->
+    ( whites | []),
+    ",",
+    ( whites | []).
+
+white_char -->
+    [X],
+    {
+        member(X, " \t")
+    }.
+whites --> white_char.
+whites -->
+       white_char,
+       whites.
+
+end_line --> "\n".
+end_line --> whites, end_line.
 
 register('$zero') --> "$zero".
 register('$at') --> "$at".
@@ -120,11 +142,13 @@ register_unify(R0, R, Reg) :-
     register_value(R0, Reg, X),
     register_value(R, Reg, X).
 
+%?- test_add.
 test_add :-
     R0 = r(_,_,1,_,_,_,3,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_),
-    execute(add('$t9', '$v1', '$a3'), mips_state(R0, _), mips_state(R, _)),
+    execute(add('$t9', '$v1', '$a3'), mips_state(R0, 0), mips_state(R, 1)),
     R = r(_,_,1,_,_,_,3,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,4,_,_,_,_,_,_).
 
+%?- test_sum.
 test_sum :-
     run_mips("sum.s", mips_state(R, 3)),
     register_value(R, '$t0', 350),
