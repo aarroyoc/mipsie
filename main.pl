@@ -4,27 +4,78 @@
 :- use_module(library(dcgs)).
 :- use_module(library(pio)).
 :- use_module(library(format)).
-
+:- use_module(library(reif)).
 
 run_mips(Filename, EndMipsState) :-
     parse(Filename, MipsCode, MipsState),
     run_all(MipsCode, MipsState, EndMipsState).
 
 parse(Filename, MipsCode, MipsState) :-
-    phrase_from_file(mips_asm(MipsCode, MipsState), Filename).
+    phrase_from_file(lines(MipsCodeLines), Filename),
+    maplist(no_comment_line, MipsCodeLines, MipsCodeLinesClean),
+    mips_asm(MipsCodeLinesClean, MipsCode, MipsState).
 
-mips_asm([Instruction|MipsCode], MipsState) -->
-    mips_instruction(Instruction),
-    mips_asm(MipsCode, MipsState).
+lines([]) --> call(eos), !.
+lines([L|Ls]) --> line(L), lines(Ls).
 
-mips_asm([], mips_state(R, 0)) -->
-    {
-        register_value(R, '$zero', _)
-    },
-    [].
+line([]) --> ( "\n" | call(eos) ), !.
+line([C|Cs]) --> [C], line(Cs).
+
+eos([], []).
+
+
+no_comment_line(L0, L) :-
+    member('#', L0),
+    phrase((seq(L), "#"), L0, _).
+
+no_comment_line(L, L) :-
+    \+ member('#', L).
+    
+
+mips_asm(Lines, Code, State) :-
+    extract_data_lines(Lines, DataLines),
+    mips_data(DataLines, State),
+    extract_text_lines(Lines, TextLines),
+    mips_text(TextLines, Code).
+
+extract_data_lines([], []).
+extract_data_lines([L|Lines], DataLines) :-
+    (
+	phrase((... , ".data", ... ), L) ->
+	extract_data_lines_end(Lines, DataLines)
+    ;	extract_data_lines(Lines, DataLines)
+    ).
+
+extract_data_lines_end([], []).
+extract_data_lines_end([L|Lines], DataLines) :-
+    (
+	phrase((... , ".text", ... ), L) ->
+	DataLines = []
+    ;	(DataLines = [L|Ds], extract_data_lines_end(Lines, Ds))
+    ).
+
+
+extract_text_lines([], []).
+extract_text_lines([L|Lines], TextLines) :-
+    (
+	phrase((... , ".text", ... ), L) ->
+	Lines = TextLines
+    ;	extract_text_lines(Lines, TextLines)
+    ).
+
+mips_data(_DataLines, State) :- default_mips_state(State).
+
+default_mips_state(mips_state(R, 0)) :-
+    register_value(R, '$zero', _).
+
+mips_text([], []).
+mips_text([Line|TextLines], [Instruction|Code]) :-
+    phrase(mips_instruction(Instruction), Line),
+    mips_text(TextLines, Code).
 
 mips_instruction(add(Rd, Rs, Rt)) -->
-    "\tadd",
+    optional_label,
+    "add",
     whites,
     register(Rd),
     comma,
@@ -34,7 +85,8 @@ mips_instruction(add(Rd, Rs, Rt)) -->
     end_line.
 
 mips_instruction(addi(Rt, Rs, I)) -->
-    "\taddi",
+    optional_label,
+    "addi",
     whites,
     register(Rt),
     comma,
@@ -54,6 +106,9 @@ number_([D]) --> digit(D).
 
 digit(D) --> [D], { char_type(D, decimal_digit) }.
 
+optional_label --> "\t".
+optional_label --> ..., ":", whites.
+
 comma -->
     ( whites | []),
     ",",
@@ -69,8 +124,7 @@ whites -->
        white_char,
        whites.
 
-end_line --> "\n".
-end_line --> whites, end_line.
+end_line --> ( whites | []).
 
 register('$zero') --> "$zero".
 register('$at') --> "$at".
@@ -153,6 +207,9 @@ test_sum :-
     run_mips("sum.s", mips_state(R, 3)),
     register_value(R, '$t0', 350),
     register_value(R, '$t1', 250).
+
+test_hello :-
+    run_mips("hello.s", _).
 
 % registers
 register(X) :- register_value(_, X, _).
