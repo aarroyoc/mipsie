@@ -5,6 +5,7 @@
 :- use_module(library(pio)).
 :- use_module(library(format)).
 :- use_module(library(reif)).
+:- use_module(library(assoc)).
 
 run_mips(Filename, EndMipsState) :-
     parse(Filename, MipsCode, MipsState),
@@ -13,7 +14,8 @@ run_mips(Filename, EndMipsState) :-
 parse(Filename, MipsCode, MipsState) :-
     phrase_from_file(lines(MipsCodeLines), Filename),
     maplist(no_comment_line, MipsCodeLines, MipsCodeLinesClean),
-    mips_asm(MipsCodeLinesClean, MipsCode, MipsState).
+    filter_empty_lines(MipsCodeLinesClean, MipsLines),
+    mips_asm(MipsLines, MipsCode, MipsState).
 
 lines([]) --> call(eos), !.
 lines([L|Ls]) --> line(L), lines(Ls).
@@ -30,7 +32,14 @@ no_comment_line(L0, L) :-
 
 no_comment_line(L, L) :-
     \+ member('#', L).
-    
+
+filter_empty_lines([], []).
+filter_empty_lines([L|Ls0], Ls) :-
+    L = "",
+    filter_empty_lines(Ls0, Ls).
+filter_empty_lines([L|Ls0], [L|Ls]) :-
+    L \= "",
+    filter_empty_lines(Ls0, Ls).
 
 mips_asm(Lines, Code, State) :-
     extract_data_lines(Lines, DataLines),
@@ -63,10 +72,48 @@ extract_text_lines([L|Lines], TextLines) :-
     ;	extract_text_lines(Lines, TextLines)
     ).
 
-mips_data(_DataLines, State) :- default_mips_state(State).
+mips_data([], State) :- default_mips_state(State).
+mips_data([L|Ls], State) :-
+    phrase(mips_data_declaration(Declaration), L),
+    mips_data(Ls, State0),
+    add_declaration_state(Declaration, State0, State).
 
-default_mips_state(mips_state(R, 0)) :-
-    register_value(R, '$zero', _).
+add_declaration_state(asciiz(Label, String), mips_state(R, PC, M0, L0), mips_state(R, PC, M, L)) :-
+    append(M0, String, M1),
+    append(M1, "\x0\", M),
+    length(M0, Addr),
+    put_assoc(Label, L0, Addr, L).
+
+% mips_state is defined as
+%    Registers
+%    PC
+%    Memory
+%    Label-Memory
+default_mips_state(mips_state(R, 0, [], LabelStore)) :-
+    register_value(R, '$zero', _),
+    empty_assoc(LabelStore).
+
+mips_data_declaration(asciiz(Label, String)) -->
+    seq(Label),
+    ":",
+    whites,
+    ".asciiz",
+    whites,
+    "\"",
+    escaped_string(String),
+    "\"",
+    end_line.
+
+escaped_string([]) --> [].
+escaped_string([X|Str]) -->
+    [X],
+    {
+        X \= (\)
+    },
+    escaped_string(Str).
+escaped_string(['\n'|Str]) -->
+    "\\n",
+    escaped_string(Str).
 
 mips_text([], []).
 mips_text([Line|TextLines], [Instruction|Code]) :-
@@ -93,6 +140,29 @@ mips_instruction(addi(Rt, Rs, I)) -->
     register(Rs),
     comma,
     number(I),
+    end_line.
+
+mips_instruction(li(Rd, I)) -->
+    optional_label,
+    "li",
+    whites,
+    register(Rd),
+    comma,
+    number(I),
+    end_line.
+
+mips_instruction(la(Rd, Label)) -->
+    optional_label,
+    "la",
+    whites,
+    register(Rd),
+    comma,
+    seq(Label),
+    end_line.
+
+mips_instruction(syscall) -->
+    optional_label,
+    "syscall",
     end_line.
 
 number(D) -->
@@ -159,32 +229,61 @@ register('$sp') --> "$sp".
 register('$fp') --> "$fp".
 register('$ra') --> "$ra".
 
-run_all(Code, mips_state(R, PC), EndState) :-
+run_all(Code, mips_state(R, PC, Memory, LabelStore), EndState) :-
     nth0(PC, Code, Instruction),
-    execute(Instruction, mips_state(R, PC), NewState),
+    execute(Instruction, mips_state(R, PC, Memory, LabelStore), NewState),
     run_all(Code, NewState, EndState).
 
-run_all(Code, mips_state(R, PC), mips_state(R, PC)) :-
+run_all(Code, mips_state(R, PC, M, LS), mips_state(R, PC, M, LS)) :-
     length(Code, N),
     PC >= N.
 
 run(Code, State) :-
     register_value(R0, '$zero', _),
     Code = [Instruction|_],
-    execute(Instruction, mips_state(R0, 0), State).
+    execute(Instruction, mips_state(R0, 0, _, _), State).
 
-execute(add(Rd, Rs, Rt), mips_state(R0, PC0), mips_state(R, PC)) :-
+execute(add(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
     register_value(R0, Rs, ValRs),
     register_value(R0, Rt, ValRt),
     ValRd is ValRs + ValRt,
     PC is PC0 + 1,
     registers_set(R0, R, Rd, ValRd).
 
-execute(addi(Rt, Rs, I), mips_state(R0, PC0), mips_state(R, PC)) :-
+execute(addi(Rt, Rs, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
     register_value(R0, Rs, ValRs),
     ValRt is ValRs + I,
     PC is PC0 + 1,
     registers_set(R0, R, Rt, ValRt).
+
+execute(li(Rd, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    registers_set(R0, R, Rd, I),
+    PC is PC0 + 1.
+
+execute(la(Rd, Label), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    get_assoc(Label, LS, Addr),
+    registers_set(R0, R, Rd, Addr),
+    PC is PC0 + 1.
+
+% syscall - print asciiz
+execute(syscall, mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, '$v0', 4),
+    register_value(R, '$a0', Addr),
+    print_asciiz(Addr, M),
+    PC is PC0 + 1.
+
+% syscall - halt
+execute(syscall, mips_state(R, PC, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, '$v0', 10),
+    halt.
+
+print_asciiz(Addr, M) :-
+    nth0(Addr, M, '\x0\').
+print_asciiz(Addr, M) :-
+    nth0(Addr, M, C),
+    format("~a", [C]),
+    AddrNext is Addr + 1,
+    print_asciiz(AddrNext, M).
 
 registers_set(R0, R, Rd, ValRd) :-
     findall(Reg, register(Reg), Rs0),
@@ -204,7 +303,7 @@ test_add :-
 
 %?- test_sum.
 test_sum :-
-    run_mips("sum.s", mips_state(R, 3)),
+    run_mips("sum.s", mips_state(R, 3, _, _)),
     register_value(R, '$t0', 350),
     register_value(R, '$t1', 250).
 
