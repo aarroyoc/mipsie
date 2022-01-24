@@ -27,11 +27,11 @@ eos([], []).
 
 
 no_comment_line(L0, L) :-
-    member('#', L0),
+    member(#, L0),
     phrase((seq(L), "#"), L0, _).
 
 no_comment_line(L, L) :-
-    \+ member('#', L).
+    \+ member(#, L).
 
 filter_empty_lines([], []).
 filter_empty_lines([L|Ls0], Ls) :-
@@ -45,11 +45,8 @@ mips_asm(Lines, Code, mips_state(R, PC, M, LS)) :-
     extract_data_lines(Lines, DataLines),
     mips_data(DataLines, mips_state(R, PC, M, LS0)),
     extract_text_lines(Lines, TextLines),
-    portray_clause(TextLines),
     mips_label_text(TextLines, Labels),
-    portray_clause(Labels),
     merge_assoc(LS0, Labels, LS),
-    portray_clause(LS),
     mips_text(TextLines, Code).
 
 merge_assoc(LS0, LS1, LS) :-
@@ -133,13 +130,11 @@ mips_label_text([], _, LS) :-
 mips_label_text([Line|TextLines], N, LS) :-
     N1 is N + 1,
     mips_label_text(TextLines, N1, LS0),
-    portray_clause(LS0),
     (
 	phrase((seq(Label), ":", end_line), Line) ->
 	PC is N + 1
     ;	phrase((seq(Label), ":", ... ), Line) -> PC = N ; true
     ),
-    portray_clause(PC),
     (\+ var(PC) -> put_assoc(Label, LS0, PC, LS) ; true).
 
 mips_text([], []).
@@ -161,6 +156,28 @@ mips_instruction(add(Rd, Rs, Rt)) -->
 mips_instruction(addi(Rt, Rs, I)) -->
     optional_label,
     "addi",
+    whites,
+    register(Rt),
+    comma,
+    register(Rs),
+    comma,
+    number(I),
+    end_line.
+
+mips_instruction(and(Rd, Rs, Rt)) -->
+    optional_label,
+    "and",
+    whites,
+    register(Rd),
+    comma,
+    register(Rs),
+    comma,
+    register(Rt),
+    end_line.
+
+mips_instruction(andi(Rt, Rs, I)) -->
+    optional_label,
+    "andi",
     whites,
     register(Rt),
     comma,
@@ -287,6 +304,19 @@ execute(add(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :
 execute(addi(Rt, Rs, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
     register_value(R0, Rs, ValRs),
     ValRt is ValRs + I,
+    PC is PC0 + 1,
+    registers_set(R0, R, Rt, ValRt).
+
+execute(and(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rs, ValRs),
+    register_value(R0, Rt, ValRt),
+    ValRd is ValRs /\ ValRt,
+    PC is PC0 + 1,
+    registers_set(R0, R, Rd, ValRd).
+
+execute(andi(Rt, Rs, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rs, ValRs),
+    ValRt is I /\ ValRs,
     PC is PC0 + 1,
     registers_set(R0, R, Rt, ValRt).
 
