@@ -41,11 +41,22 @@ filter_empty_lines([L|Ls0], [L|Ls]) :-
     L \= "",
     filter_empty_lines(Ls0, Ls).
 
-mips_asm(Lines, Code, State) :-
+mips_asm(Lines, Code, mips_state(R, PC, M, LS)) :-
     extract_data_lines(Lines, DataLines),
-    mips_data(DataLines, State),
+    mips_data(DataLines, mips_state(R, PC, M, LS0)),
     extract_text_lines(Lines, TextLines),
+    portray_clause(TextLines),
+    mips_label_text(TextLines, Labels),
+    portray_clause(Labels),
+    merge_assoc(LS0, Labels, LS),
+    portray_clause(LS),
     mips_text(TextLines, Code).
+
+merge_assoc(LS0, LS1, LS) :-
+    assoc_to_list(LS0, LS0s),
+    assoc_to_list(LS1, LS1s),
+    append(LS0s, LS1s, LSs),
+    list_to_assoc(LSs, LS).
 
 extract_data_lines([], []).
 extract_data_lines([L|Lines], DataLines) :-
@@ -115,6 +126,22 @@ escaped_string(['\n'|Str]) -->
     "\\n",
     escaped_string(Str).
 
+mips_label_text(TextLines, LS) :-
+    mips_label_text(TextLines, 0, LS).
+mips_label_text([], _, LS) :-
+    empty_assoc(LS).
+mips_label_text([Line|TextLines], N, LS) :-
+    N1 is N + 1,
+    mips_label_text(TextLines, N1, LS0),
+    portray_clause(LS0),
+    (
+	phrase((seq(Label), ":", end_line), Line) ->
+	PC is N + 1
+    ;	phrase((seq(Label), ":", ... ), Line) -> PC = N ; true
+    ),
+    portray_clause(PC),
+    (\+ var(PC) -> put_assoc(Label, LS0, PC, LS) ; true).
+
 mips_text([], []).
 mips_text([Line|TextLines], [Instruction|Code]) :-
     phrase(mips_instruction(Instruction), Line),
@@ -140,6 +167,13 @@ mips_instruction(addi(Rt, Rs, I)) -->
     register(Rs),
     comma,
     number(I),
+    end_line.
+
+mips_instruction(j(Label)) -->
+    optional_label,
+    "j",
+    whites,
+    seq(Label),
     end_line.
 
 mips_instruction(li(Rd, I)) -->
@@ -255,6 +289,9 @@ execute(addi(Rt, Rs, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :
     ValRt is ValRs + I,
     PC is PC0 + 1,
     registers_set(R0, R, Rt, ValRt).
+
+execute(j(Label), mips_state(R, _, M, LS), mips_state(R, PC, M, LS)) :-
+    get_assoc(Label, LS, PC).
 
 execute(li(Rd, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
     registers_set(R0, R, Rd, I),
