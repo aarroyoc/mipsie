@@ -186,6 +186,28 @@ mips_instruction(andi(Rt, Rs, I)) -->
     number(I),
     end_line.
 
+mips_instruction(beq(Rs, Rt, Label)) -->
+    optional_label,
+    "beq",
+    whites,
+    register(Rs),
+    comma,
+    register(Rt),
+    comma,
+    seq(Label),
+    end_line.
+
+mips_instruction(bne(Rs, Rt, Label)) -->
+    optional_label,
+    "bne",
+    whites,
+    register(Rs),
+    comma,
+    register(Rt),
+    comma,
+    seq(Label),
+    end_line.
+
 mips_instruction(j(Label)) -->
     optional_label,
     "j",
@@ -319,6 +341,26 @@ execute(andi(Rt, Rs, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :
     ValRt is I /\ ValRs,
     PC is PC0 + 1,
     registers_set(R0, R, Rt, ValRt).
+
+% in real MIPS branch instructions use relative addresses, but most assemblers work with labels too,
+% so the end result is the same as with jumps (which use absolute addresses)
+execute(beq(Rs, Rt, Label), mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, Rs, ValRs),
+    register_value(R, Rt, ValRt),
+    (
+	ValRs = ValRt ->
+	get_assoc(Label, LS, PC)
+    ;   PC is PC0 +1
+    ).
+
+execute(bne(Rs, Rt, Label), mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, Rs, ValRs),
+    register_value(R, Rt, ValRt),
+    (
+	ValRs \= ValRt ->
+	get_assoc(Label, LS, PC)
+    ;   PC is PC0 +1
+    ).
 
 execute(j(Label), mips_state(R, _, M, LS), mips_state(R, PC, M, LS)) :-
     get_assoc(Label, LS, PC).
