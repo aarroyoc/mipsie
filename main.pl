@@ -92,6 +92,22 @@ add_declaration_state(asciiz(Label, String), mips_state(R, PC, M0, L0), mips_sta
     length(M0, Addr),
     put_assoc(Label, L0, Addr, L).
 
+add_declaration_state(word(Label, Values), mips_state(R, PC, M0, L0), mips_state(R, PC, M, L)) :-
+    words_bytes(Values, Bytes),
+    append(M0, Bytes, M),
+    length(M0, Addr),
+    put_assoc(Label, L0, Addr, L).
+
+add_declaration_state(byte(Label, Values), mips_state(R, PC, M0, L0), mips_state(R, PC, M, L)) :-
+    append(M0, Values, M),
+    length(M0, Addr),
+    put_assoc(Label, L0, Addr, L).
+
+add_declaration_state(space(Label, Values), mips_state(R, PC, M0, L0), mips_state(R, PC, M, L)) :-
+    append(M0, Values, M),
+    length(M0, Addr),
+    put_assoc(Label, L0, Addr, L).
+
 % mips_state is defined as
 %    Registers
 %    PC
@@ -100,6 +116,18 @@ add_declaration_state(asciiz(Label, String), mips_state(R, PC, M0, L0), mips_sta
 default_mips_state(mips_state(R, 0, [], LabelStore)) :-
     register_value(R, '$zero', _),
     empty_assoc(LabelStore).
+
+words_bytes([], []).
+words_bytes([W|Words], Bytes) :-
+    int32(W, Bs),
+    append(Bs, Bytes0, Bytes),
+    words_bytes(Words, Bytes0).
+    
+int32(Number, [B3, B2, B1, B0]) :-
+    B0 is Number /\ 255,
+    B1 is (Number >> 8) /\ 255,
+    B2 is (Number >> 16) /\ 255,
+    B3 is (Number >> 24) /\ 255.
 
 mips_data_declaration(asciiz(Label, String)) -->
     seq(Label),
@@ -111,6 +139,43 @@ mips_data_declaration(asciiz(Label, String)) -->
     escaped_string(String),
     "\"",
     end_line.
+
+mips_data_declaration(word(Label, Values)) -->
+    seq(Label),
+    ":",
+    whites,
+    ".word",
+    whites,
+    values(Values),
+    end_line.
+
+mips_data_declaration(byte(Label, Values)) -->
+    seq(Label),
+    ":",
+    whites,
+    ".byte",
+    whites,
+    values(Values),
+    end_line.
+
+mips_data_declaration(space(Label, Values)) -->
+    seq(Label),
+    ":",
+    whites,
+    ".space",
+    whites,
+    number(N),
+    end_line,
+    {
+	length(Values, N)
+    }.
+
+values([V]) --> number(V).
+values([V|Vs]) -->
+    number(V),
+    comma,
+    values(Vs).
+    
 
 escaped_string([]) --> [].
 escaped_string([X|Str]) -->
@@ -208,11 +273,70 @@ mips_instruction(bne(Rs, Rt, Label)) -->
     seq(Label),
     end_line.
 
+mips_instruction(blt(Rs, Rt, Label)) -->
+    optional_label,
+    "blt",
+    whites,
+    register(Rs),
+    comma,
+    register(Rt),
+    comma,
+    seq(Label),
+    end_line.
+
+
+mips_instruction(bgt(Rs, Rt, Label)) -->
+    optional_label,
+    "bgt",
+    whites,
+    register(Rs),
+    comma,
+    register(Rt),
+    comma,
+    seq(Label),
+    end_line.
+
+mips_instruction(ble(Rs, Rt, Label)) -->
+    optional_label,
+    "ble",
+    whites,
+    register(Rs),
+    comma,
+    register(Rt),
+    comma,
+    seq(Label),
+    end_line.
+
+mips_instruction(bge(Rs, Rt, Label)) -->
+    optional_label,
+    "bge",
+    whites,
+    register(Rs),
+    comma,
+    register(Rt),
+    comma,
+    seq(Label),
+    end_line.
+
 mips_instruction(j(Label)) -->
     optional_label,
     "j",
     whites,
     seq(Label),
+    end_line.
+
+mips_instruction(jal(Label)) -->
+    optional_label,
+    "jal",
+    whites,
+    seq(Label),
+    end_line.
+
+mips_instruction(jr(Rs)) -->
+    optional_label,
+    "jr",
+    whites,
+    register(Rs),
     end_line.
 
 mips_instruction(li(Rd, I)) -->
@@ -231,6 +355,48 @@ mips_instruction(la(Rd, Label)) -->
     register(Rd),
     comma,
     seq(Label),
+    end_line.
+
+mips_instruction(move(Rd, Rs)) -->
+    optional_label,
+    "move",
+    whites,
+    register(Rd),
+    comma,
+    register(Rs),
+    end_line.
+
+mips_instruction(or(Rd, Rs, Rt)) -->
+    optional_label,
+    "or",
+    whites,
+    register(Rd),
+    comma,
+    register(Rs),
+    comma,
+    register(Rt),
+    end_line.
+
+mips_instruction(ori(Rd, Rs, I)) -->
+    optional_label,
+    "ori",
+    whites,
+    register(Rd),
+    comma,
+    register(Rs),
+    comma,
+    number(I),
+    end_line.
+
+mips_instruction(sub(Rd, Rs, Rt)) -->
+    optional_label,
+    "sub",
+    whites,
+    register(Rd),
+    comma,
+    register(Rs),
+    comma,
+    register(Rt),
     end_line.
 
 mips_instruction(syscall) -->
@@ -365,6 +531,32 @@ execute(bne(Rs, Rt, Label), mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS))
 execute(j(Label), mips_state(R, _, M, LS), mips_state(R, PC, M, LS)) :-
     get_assoc(Label, LS, PC).
 
+execute(jal(Label), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    get_assoc(Label, LS, PC),
+    NewPC is PC0 + 1,
+    registers_set(R0, R, '$ra', NewPC).
+
+execute(jr(Rs), mips_state(R, _, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, Rs, PC).
+
+execute(move(Rd, Rs), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rs, Val),
+    registers_set(R0, R, Rd, Val),
+    PC is PC0 + 1.
+
+execute(or(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rs, ValRs),
+    register_value(R0, Rt, ValRt),
+    ValRd is ValRs \/ ValRt,
+    registers_set(R0, R, Rd, ValRd),
+    PC is PC0 + 1.
+
+execute(ori(Rt, Rs, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rs, ValRs),
+    ValRt is I \/ ValRs,
+    PC is PC0 + 1,
+    registers_set(R0, R, Rt, ValRt).
+
 execute(li(Rd, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
     registers_set(R0, R, Rd, I),
     PC is PC0 + 1.
@@ -372,6 +564,13 @@ execute(li(Rd, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
 execute(la(Rd, Label), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
     get_assoc(Label, LS, Addr),
     registers_set(R0, R, Rd, Addr),
+    PC is PC0 + 1.
+
+execute(sub(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rs, ValRs),
+    register_value(R0, Rt, ValRt),
+    ValRd is ValRs - ValRt,
+    registers_set(R0, R, Rd, ValRd),
     PC is PC0 + 1.
 
 % syscall - print asciiz
