@@ -35,10 +35,10 @@ no_comment_line(L, L) :-
 
 filter_empty_lines([], []).
 filter_empty_lines([L|Ls0], Ls) :-
-    L = "",
+    (phrase(whites, L); L = ""),
     filter_empty_lines(Ls0, Ls).
 filter_empty_lines([L|Ls0], [L|Ls]) :-
-    L \= "",
+    \+ (phrase(whites, L); L = ""),
     filter_empty_lines(Ls0, Ls).
 
 mips_asm(Lines, Code, mips_state(R, PC, M, LS)) :-
@@ -93,7 +93,7 @@ add_declaration_state(asciiz(Label, String), mips_state(R, PC, M0, L0), mips_sta
     put_assoc(Label, L0, Addr, L).
 
 add_declaration_state(word(Label, Values), mips_state(R, PC, M0, L0), mips_state(R, PC, M, L)) :-
-    words_bytes(Values, Bytes),
+    phrase(words_bytes(Values), Bytes),
     append(M0, Bytes, M),
     length(M0, Addr),
     put_assoc(Label, L0, Addr, L).
@@ -117,17 +117,25 @@ default_mips_state(mips_state(R, 0, [], LabelStore)) :-
     register_value(R, '$zero', _),
     empty_assoc(LabelStore).
 
-words_bytes([], []).
+/*words_bytes([], []).
 words_bytes([W|Words], Bytes) :-
     int32(W, Bs),
     append(Bs, Bytes0, Bytes),
-    words_bytes(Words, Bytes0).
-    
-int32(Number, [B3, B2, B1, B0]) :-
-    B0 is Number /\ 255,
-    B1 is (Number >> 8) /\ 255,
-    B2 is (Number >> 16) /\ 255,
-    B3 is (Number >> 24) /\ 255.
+    words_bytes(Words, Bytes0).*/
+
+words_bytes([]) --> [].
+words_bytes([W|Words]) -->
+    int32(W),
+    words_bytes(Words).
+
+int32(Number) -->
+    {
+        B0 is Number /\ 255,
+        B1 is (Number >> 8) /\ 255,
+        B2 is (Number >> 16) /\ 255,
+        B3 is (Number >> 24) /\ 255
+    },
+    [B3, B2, B1, B0].
 
 mips_data_declaration(asciiz(Label, String)) -->
     seq(Label),
@@ -348,13 +356,31 @@ mips_instruction(li(Rd, I)) -->
     number(I),
     end_line.
 
-mips_instruction(la(Rd, Label)) -->
+mips_instruction(la(Rd, Label, Base, Rt)) -->
     optional_label,
     "la",
     whites,
     register(Rd),
     comma,
-    seq(Label),
+    address(Label, Base, Rt),
+    end_line.
+
+mips_instruction(lb(Rd, Label, Base, Rt)) -->
+    optional_label,
+    "lb",
+    whites,
+    register(Rd),
+    comma,
+    address(Label, Base, Rt),
+    end_line.
+
+mips_instruction(lw(Rd, Label, Base, Rt)) -->
+    optional_label,
+    "lw",
+    whites,
+    register(Rd),
+    comma,
+    address(Label, Base, Rt),
     end_line.
 
 mips_instruction(move(Rd, Rs)) -->
@@ -388,6 +414,24 @@ mips_instruction(ori(Rd, Rs, I)) -->
     number(I),
     end_line.
 
+mips_instruction(sb(Rd, Label, Base, Rt)) -->
+    optional_label,
+    "sb",
+    whites,
+    register(Rd),
+    comma,
+    address(Label, Base, Rt),
+    end_line.
+
+mips_instruction(sw(Rd, Label, Base, Rt)) -->
+    optional_label,
+    "sw",
+    whites,
+    register(Rd),
+    comma,
+    address(Label, Base, Rt),
+    end_line.
+
 mips_instruction(sub(Rd, Rs, Rt)) -->
     optional_label,
     "sub",
@@ -417,6 +461,41 @@ digit(D) --> [D], { char_type(D, decimal_digit) }.
 
 optional_label --> "\t".
 optional_label --> ..., ":", whites.
+
+address(no_label, 0, Rt) -->
+    "(",
+    register(Rt),
+    ")".
+
+address(no_label, Base, Rt) -->
+    number(Base),
+    "(",
+    register(Rt),
+    ")".
+
+address(Label, Base, '$zero') -->
+    seq(Label),
+    whites,
+    "+",
+    whites,
+    number(Base).
+
+address(Label, Base, Rt) -->
+    seq(Label),
+    whites,
+    "+",
+    whites,
+    number(Base),
+    "(",
+    register(Rt),
+    ")".
+
+address(Label, 0, '$zero') -->
+    seq(Label),
+    {
+	\+ member(+, Label),
+	\+ member('(', Label)
+    }.
 
 comma -->
     ( whites | []),
@@ -561,10 +640,42 @@ execute(li(Rd, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
     registers_set(R0, R, Rd, I),
     PC is PC0 + 1.
 
-execute(la(Rd, Label), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
-    get_assoc(Label, LS, Addr),
+execute(la(Rd, Label, Base, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    get_address(R0, LS, Label, Base, Rt, Addr),
     registers_set(R0, R, Rd, Addr),
     PC is PC0 + 1.
+
+execute(lb(Rd, Label, Base, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    get_address(R0, LS, Label, Base, Rt, Addr),
+    nth0(Addr, M, Val),
+    registers_set(R0, R, Rd, Val),
+    PC is PC0 + 1.
+
+execute(lw(Rd, Label, Base, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    get_address(R0, LS, Label, Base, Rt, Addr),
+    nth0(Addr, M, B3),
+    Addr1 is Addr + 1, nth0(Addr1, M, B2),
+    Addr2 is Addr + 2, nth0(Addr2, M, B1),
+    Addr3 is Addr + 3, nth0(Addr3, M, B0),
+    int32(Val, [B3, B2, B1, B0]),
+    registers_set(R0, R, Rd, Val),
+    PC is PC0 + 1.
+
+execute(sb(Rd, Label, Base, Rt), mips_state(R, PC0, M0, LS), mips_state(R, PC, M, LS)) :-
+    get_address(R, LS, Label, Base, Rt, Addr),
+    register_value(R, Rd, Val),
+    memory_set(M0, M, Addr, Val),
+    PC is PC0 +1.
+
+execute(sw(Rd, Label, Base, Rt), mips_state(R, PC0, M0, LS), mips_state(R, PC, M, LS)) :-
+    get_address(R, LS, Label, Base, Rt, Addr),
+    register_value(R, Rd, Val),
+    int32(Val, [B3, B2, B1, B0]),
+    memory_set(M0, M1, Addr, B3),
+    Addr1 is Addr + 1, memory_set(M1, M2, Addr1, B2),
+    Addr2 is Addr + 2, memory_set(M2, M3, Addr2, B1),
+    Addr3 is Addr + 3, memory_set(M3, M, Addr3, B0),
+    PC is PC0 +1.
 
 execute(sub(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
     register_value(R0, Rs, ValRs),
@@ -585,11 +696,43 @@ execute(syscall, mips_state(R, PC, M, LS), mips_state(R, PC, M, LS)) :-
     register_value(R, '$v0', 10),
     halt.
 
+get_address(R0, _, no_label, Base, Rt, Addr) :-
+    register_value(R0, Rt, ValRt),
+    Addr is Base + ValRt.
+
+get_address(R0, LS, Label, Base, Rt, Addr) :-
+    Label \= no_label,
+    register_value(R0, Rt, ValRt),
+    get_assoc(Label, LS, ValLabel),
+    Addr is ValLabel + Base + ValRt.
+
+memory_set(M0, M, Addr, Val) :-
+    memory_set_(M0, M, 0, Addr, Val).
+
+memory_set_([], [], _, _, _).
+memory_set_([M|Ms0], [M|Ms], N, Addr, Val) :-
+    N \= Addr,
+    NewN is N + 1,
+    memory_set_(Ms0, Ms, NewN, Addr, Val).
+memory_set_([_|Ms], [Val|Ms], Addr, Addr, Val).
+
+int32(Number, [B3, B2, B1, B0]) :-
+    var(Number),
+    Number is (B3 << 24) + (B2 << 16) + (B1 << 8) + B0.
+
+int32(Number, [B3, B2, B1, B0]) :-
+    integer(Number),
+    B0 is Number /\ 255,
+    B1 is (Number >> 8) /\ 255,
+    B2 is (Number >> 16) /\ 255,
+    B3 is (Number >> 24) /\ 255.
+
 print_asciiz(Addr, M) :-
     nth0(Addr, M, '\x0\').
 print_asciiz(Addr, M) :-
     nth0(Addr, M, C),
-    format("~a", [C]),
+    (atom(C) -> C = Ch; char_code(Ch, C)),
+    format("~a", [Ch]),
     AddrNext is Addr + 1,
     print_asciiz(AddrNext, M).
 
