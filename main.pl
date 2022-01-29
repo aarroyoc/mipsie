@@ -117,12 +117,6 @@ default_mips_state(mips_state(R, 0, [], LabelStore)) :-
     register_value(R, '$zero', _),
     empty_assoc(LabelStore).
 
-/*words_bytes([], []).
-words_bytes([W|Words], Bytes) :-
-    int32(W, Bs),
-    append(Bs, Bytes0, Bytes),
-    words_bytes(Words, Bytes0).*/
-
 words_bytes([]) --> [].
 words_bytes([W|Words]) -->
     int32(W),
@@ -201,23 +195,48 @@ mips_label_text(TextLines, LS) :-
 mips_label_text([], _, LS) :-
     empty_assoc(LS).
 mips_label_text([Line|TextLines], N, LS) :-
-    N1 is N + 1,
-    mips_label_text(TextLines, N1, LS0),
     (
-	phrase((seq(Label), ":", end_line), Line) ->
-	PC is N + 1
-    ;	phrase((seq(Label), ":", ... ), Line) -> PC = N ; true
+        phrase(((whites | []), string(Label), ":", end_line ), Line) ->
+	(N1 is N, PC = N)
+    ;   phrase(((whites | []), string(Label), ":", ... ), Line) -> (N1 is N + 1, PC = N); (N1 is N + 1)
     ),
-    (\+ var(PC) -> put_assoc(Label, LS0, PC, LS) ; true).
+    mips_label_text(TextLines, N1, LS0),
+    (\+ var(PC) -> put_assoc(Label, LS0, PC, LS) ; LS0 = LS).
 
 mips_text([], []).
 mips_text([Line|TextLines], [Instruction|Code]) :-
     phrase(mips_instruction(Instruction), Line),
     mips_text(TextLines, Code).
+mips_text([Line|TextLines], Code) :-
+    phrase((... , ":", ...), Line),
+    mips_text(TextLines, Code).
 
-mips_instruction(add(Rd, Rs, Rt)) -->
+instruction(add, r).
+instruction(addi, i).
+instruction(and, r).
+instruction(andi, i).
+instruction(la, i_a).
+instruction(lb, i_a).
+instruction(lw, i_a).
+instruction(nor, r).
+instruction(or, r).
+instruction(ori, i).
+instruction(sb, i_a).
+instruction(sll, i).
+instruction(slt, r).
+instruction(slti, i).
+instruction(srl, i).
+instruction(sub, r).
+instruction(sw, i_a).
+
+r_instruction(Instruction) -->
+    {
+	instruction(Name, r),
+	atom_chars(Name, SName),
+	Instruction =.. [Name, Rd, Rs, Rt]
+    },
     optional_label,
-    "add",
+    SName,
     whites,
     register(Rd),
     comma,
@@ -225,10 +244,14 @@ mips_instruction(add(Rd, Rs, Rt)) -->
     comma,
     register(Rt),
     end_line.
-
-mips_instruction(addi(Rt, Rs, I)) -->
+i_instruction(Instruction) -->
+    {
+	instruction(Name, i),
+	atom_chars(Name, SName),
+	Instruction =.. [Name, Rt, Rs, I]
+    },
     optional_label,
-    "addi",
+    SName,
     whites,
     register(Rt),
     comma,
@@ -237,27 +260,26 @@ mips_instruction(addi(Rt, Rs, I)) -->
     number(I),
     end_line.
 
-mips_instruction(and(Rd, Rs, Rt)) -->
+i_a_instruction(Instruction) -->
+    {
+	instruction(Name, i_a),
+	atom_chars(Name, SName),
+	Instruction =.. [Name, Rd, Label, Base, Rt]
+    },
     optional_label,
-    "and",
+    SName,
     whites,
     register(Rd),
     comma,
-    register(Rs),
-    comma,
-    register(Rt),
+    address(Label, Base, Rt),
     end_line.
 
-mips_instruction(andi(Rt, Rs, I)) -->
-    optional_label,
-    "andi",
-    whites,
-    register(Rt),
-    comma,
-    register(Rs),
-    comma,
-    number(I),
-    end_line.
+mips_instruction(Instruction) -->
+    r_instruction(Instruction).
+mips_instruction(Instruction) -->
+    i_instruction(Instruction).
+mips_instruction(Instruction) -->
+    i_a_instruction(Instruction).
 
 mips_instruction(beq(Rs, Rt, Label)) -->
     optional_label,
@@ -267,7 +289,7 @@ mips_instruction(beq(Rs, Rt, Label)) -->
     comma,
     register(Rt),
     comma,
-    seq(Label),
+    string(Label),
     end_line.
 
 mips_instruction(bne(Rs, Rt, Label)) -->
@@ -278,7 +300,7 @@ mips_instruction(bne(Rs, Rt, Label)) -->
     comma,
     register(Rt),
     comma,
-    seq(Label),
+    string(Label),
     end_line.
 
 mips_instruction(blt(Rs, Rt, Label)) -->
@@ -289,7 +311,7 @@ mips_instruction(blt(Rs, Rt, Label)) -->
     comma,
     register(Rt),
     comma,
-    seq(Label),
+    string(Label),
     end_line.
 
 
@@ -301,7 +323,7 @@ mips_instruction(bgt(Rs, Rt, Label)) -->
     comma,
     register(Rt),
     comma,
-    seq(Label),
+    string(Label),
     end_line.
 
 mips_instruction(ble(Rs, Rt, Label)) -->
@@ -312,7 +334,7 @@ mips_instruction(ble(Rs, Rt, Label)) -->
     comma,
     register(Rt),
     comma,
-    seq(Label),
+    string(Label),
     end_line.
 
 mips_instruction(bge(Rs, Rt, Label)) -->
@@ -323,21 +345,21 @@ mips_instruction(bge(Rs, Rt, Label)) -->
     comma,
     register(Rt),
     comma,
-    seq(Label),
+    string(Label),
     end_line.
 
 mips_instruction(j(Label)) -->
     optional_label,
     "j",
     whites,
-    seq(Label),
+    string(Label),
     end_line.
 
 mips_instruction(jal(Label)) -->
     optional_label,
     "jal",
     whites,
-    seq(Label),
+    string(Label),
     end_line.
 
 mips_instruction(jr(Rs)) -->
@@ -356,31 +378,18 @@ mips_instruction(li(Rd, I)) -->
     number(I),
     end_line.
 
-mips_instruction(la(Rd, Label, Base, Rt)) -->
+mips_instruction(mfhi(Rd)) -->
     optional_label,
-    "la",
+    "mfhi",
     whites,
     register(Rd),
-    comma,
-    address(Label, Base, Rt),
     end_line.
 
-mips_instruction(lb(Rd, Label, Base, Rt)) -->
+mips_instruction(mflo(Rd)) -->
     optional_label,
-    "lb",
+    "mflo",
     whites,
     register(Rd),
-    comma,
-    address(Label, Base, Rt),
-    end_line.
-
-mips_instruction(lw(Rd, Label, Base, Rt)) -->
-    optional_label,
-    "lw",
-    whites,
-    register(Rd),
-    comma,
-    address(Label, Base, Rt),
     end_line.
 
 mips_instruction(move(Rd, Rs)) -->
@@ -392,55 +401,22 @@ mips_instruction(move(Rd, Rs)) -->
     register(Rs),
     end_line.
 
-mips_instruction(or(Rd, Rs, Rt)) -->
+mips_instruction(mult(Rd, Rs)) -->
     optional_label,
-    "or",
+    "mult",
     whites,
     register(Rd),
     comma,
     register(Rs),
-    comma,
-    register(Rt),
     end_line.
 
-mips_instruction(ori(Rd, Rs, I)) -->
+mips_instruction(div(Rd, Rs)) -->
     optional_label,
-    "ori",
+    "div",
     whites,
     register(Rd),
     comma,
     register(Rs),
-    comma,
-    number(I),
-    end_line.
-
-mips_instruction(sb(Rd, Label, Base, Rt)) -->
-    optional_label,
-    "sb",
-    whites,
-    register(Rd),
-    comma,
-    address(Label, Base, Rt),
-    end_line.
-
-mips_instruction(sw(Rd, Label, Base, Rt)) -->
-    optional_label,
-    "sw",
-    whites,
-    register(Rd),
-    comma,
-    address(Label, Base, Rt),
-    end_line.
-
-mips_instruction(sub(Rd, Rs, Rt)) -->
-    optional_label,
-    "sub",
-    whites,
-    register(Rd),
-    comma,
-    register(Rs),
-    comma,
-    register(Rt),
     end_line.
 
 mips_instruction(syscall) -->
@@ -448,6 +424,12 @@ mips_instruction(syscall) -->
     "syscall",
     end_line.
 
+number(D) -->
+    "-",
+    number_(Ds),
+    {
+	number_chars(D, [-|Ds])
+    }.
 number(D) -->
     number_(Ds),
     {
@@ -459,8 +441,9 @@ number_([D]) --> digit(D).
 
 digit(D) --> [D], { char_type(D, decimal_digit) }.
 
-optional_label --> "\t".
+optional_label --> whites.
 optional_label --> ..., ":", whites.
+optional_label --> [].
 
 address(no_label, 0, Rt) -->
     "(",
@@ -474,14 +457,14 @@ address(no_label, Base, Rt) -->
     ")".
 
 address(Label, Base, '$zero') -->
-    seq(Label),
+    string(Label),
     whites,
     "+",
     whites,
     number(Base).
 
 address(Label, Base, Rt) -->
-    seq(Label),
+    string(Label),
     whites,
     "+",
     whites,
@@ -491,7 +474,7 @@ address(Label, Base, Rt) -->
     ")".
 
 address(Label, 0, '$zero') -->
-    seq(Label),
+    string(Label),
     {
 	\+ member(+, Label),
 	\+ member('(', Label)
@@ -512,9 +495,17 @@ whites -->
        white_char,
        whites.
 
+string(X) -->
+    seq(X),
+    {
+	\+ member(' ', X),
+	\+ member('\t', X)
+    }.
+
 end_line --> ( whites | []).
 
 register('$zero') --> "$zero".
+register('$zero') --> "$0".
 register('$at') --> "$at".
 register('$v0') --> "$v0".
 register('$v1') --> "$v1".
@@ -549,7 +540,7 @@ register('$ra') --> "$ra".
 
 run_all(Code, mips_state(R, PC, Memory, LabelStore), EndState) :-
     nth0(PC, Code, Instruction),
-    execute(Instruction, mips_state(R, PC, Memory, LabelStore), NewState),
+    execute(Instruction, mips_state(R, PC, Memory, LabelStore), NewState),!,
     run_all(Code, NewState, EndState).
 
 run_all(Code, mips_state(R, PC, M, LS), mips_state(R, PC, M, LS)) :-
@@ -607,6 +598,42 @@ execute(bne(Rs, Rt, Label), mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS))
     ;   PC is PC0 +1
     ).
 
+execute(blt(Rs, Rt, Label), mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, Rs, ValRs),
+    register_value(R, Rt, ValRt),
+    (
+	ValRs < ValRt ->
+	get_assoc(Label, LS, PC)
+    ;   PC is PC0 +1
+    ).
+
+execute(bgt(Rs, Rt, Label), mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, Rs, ValRs),
+    register_value(R, Rt, ValRt),
+    (
+	ValRs > ValRt ->
+	get_assoc(Label, LS, PC)
+    ;   PC is PC0 +1
+    ).
+
+execute(ble(Rs, Rt, Label), mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, Rs, ValRs),
+    register_value(R, Rt, ValRt),
+    (
+	ValRs =< ValRt ->
+	get_assoc(Label, LS, PC)
+    ;   PC is PC0 +1
+    ).
+
+execute(bge(Rs, Rt, Label), mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, Rs, ValRs),
+    register_value(R, Rt, ValRt),
+    (
+	ValRs >= ValRt ->
+	get_assoc(Label, LS, PC)
+    ;   PC is PC0 +1
+    ).
+
 execute(j(Label), mips_state(R, _, M, LS), mips_state(R, PC, M, LS)) :-
     get_assoc(Label, LS, PC).
 
@@ -621,6 +648,13 @@ execute(jr(Rs), mips_state(R, _, M, LS), mips_state(R, PC, M, LS)) :-
 execute(move(Rd, Rs), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
     register_value(R0, Rs, Val),
     registers_set(R0, R, Rd, Val),
+    PC is PC0 + 1.
+
+execute(nor(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rs, ValRs),
+    register_value(R0, Rt, ValRt),
+    ValRd is \ (ValRs \/ ValRt),
+    registers_set(R0, R, Rd, ValRd),
     PC is PC0 + 1.
 
 execute(or(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
@@ -661,6 +695,35 @@ execute(lw(Rd, Label, Base, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M
     registers_set(R0, R, Rd, Val),
     PC is PC0 + 1.
 
+execute(div(Rd, Rs), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rd, ValRd),
+    register_value(R0, Rs, ValRs),
+    Lo is ValRd / ValRs,
+    Hi is ValRd rem ValRs,
+    registers_set(R0, R1, '$__lo', Lo),
+    registers_set(R1, R, '$__hi', Hi),
+    PC is PC0 + 1.
+
+execute(mult(Rd, Rs), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rd, ValRd),
+    register_value(R0, Rs, ValRs),
+    Val is ValRd * ValRs,
+    Lo is Val / (2^32),
+    Hi is Val >> 32,
+    registers_set(R0, R1, '$__lo', Lo),
+    registers_set(R1, R, '$__hi', Hi),
+    PC is PC0 +1.
+
+execute(mfhi(Rd), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, '$__hi', ValRd),
+    registers_set(R0, R, Rd, ValRd),
+    PC is PC0 + 1.
+
+execute(mflo(Rd), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, '$__lo', ValRd),
+    registers_set(R0, R, Rd, ValRd),
+    PC is PC0 + 1.
+
 execute(sb(Rd, Label, Base, Rt), mips_state(R, PC0, M0, LS), mips_state(R, PC, M, LS)) :-
     get_address(R, LS, Label, Base, Rt, Addr),
     register_value(R, Rd, Val),
@@ -682,6 +745,46 @@ execute(sub(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :
     register_value(R0, Rt, ValRt),
     ValRd is ValRs - ValRt,
     registers_set(R0, R, Rd, ValRd),
+    PC is PC0 + 1.
+
+execute(sll(Rt, Rs, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rs, ValRs),
+    ValRt is ValRs << I,
+    PC is PC0 + 1,
+    registers_set(R0, R, Rt, ValRt).
+
+execute(srl(Rt, Rs, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R0, Rs, ValRs),
+    ValRt is ValRs >> I,
+    PC is PC0 + 1,
+    registers_set(R0, R, Rt, ValRt).
+
+execute(slt(Rd, Rs, Rt), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, Rs, ValRs),
+    register_value(R, Rt, ValRt),
+    (
+	ValRs < ValRt ->
+	ValRd = 1
+    ;   ValRd = 0
+    ),
+    PC is PC0 + 1,
+    registers_set(R0, R, Rd, ValRd).
+
+execute(slti(Rd, Rs, I), mips_state(R0, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, Rs, ValRs),
+    (
+	ValRs < I ->
+	ValRd = 1
+    ;   ValRd = 0
+    ),
+    PC is PC0 + 1,
+    registers_set(R0, R, Rd, ValRd).
+
+% syscall - print int
+execute(syscall, mips_state(R, PC0, M, LS), mips_state(R, PC, M, LS)) :-
+    register_value(R, '$v0', 1),
+    register_value(R, '$a0', Val),
+    format("~d", [Val]),
     PC is PC0 + 1.
 
 % syscall - print asciiz
@@ -763,35 +866,37 @@ test_hello :-
 
 % registers
 register(X) :- register_value(_, X, _).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$zero', 0).
-register_value(r(X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$at', X).
-register_value(r(_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$v0', X).
-register_value(r(_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$v1', X).
-register_value(r(_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$a0', X).
-register_value(r(_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$a1', X).
-register_value(r(_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$a2', X).
-register_value(r(_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$a3', X).
-register_value(r(_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t0', X).
-register_value(r(_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t1', X).
-register_value(r(_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t2', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t3', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t4', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t5', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t6', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t7', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$s0', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$s1', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_), '$s2', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_), '$s3', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_), '$s4', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_), '$s5', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_), '$s6', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_), '$s7', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_), '$t8', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_), '$t9', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_), '$k0', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_), '$k1', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_), '$gp', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_), '$sp', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_), '$fp', X).
-register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X), '$ra', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$zero', 0).
+register_value(r(X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$at', X).
+register_value(r(_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$v0', X).
+register_value(r(_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$v1', X).
+register_value(r(_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$a0', X).
+register_value(r(_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$a1', X).
+register_value(r(_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$a2', X).
+register_value(r(_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$a3', X).
+register_value(r(_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t0', X).
+register_value(r(_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t1', X).
+register_value(r(_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t2', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t3', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t4', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t5', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t6', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$t7', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$s0', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$s1', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$s2', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_,_), '$s3', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_,_), '$s4', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_,_), '$s5', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_,_), '$s6', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_,_), '$s7', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_,_), '$t8', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_,_), '$t9', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_,_), '$k0', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_,_), '$k1', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_,_), '$gp', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_,_), '$sp', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_,_), '$fp', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_,_), '$ra', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X,_), '$__hi', X).
+register_value(r(_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,X), '$__lo', X).
