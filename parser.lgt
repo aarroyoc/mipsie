@@ -1,17 +1,17 @@
 :- object(parser).
 
     :- public(parse/3).
-    parse(Filename, Code, State) :-
+    parse(Filename, MipsCode, MipsState) :-
         phrase_from_file(lines(MipsCodeLines), Filename),
 	meta::map(no_comment_line, MipsCodeLines, MipsCodeLinesClean),
 	filter_empty_lines(MipsCodeLinesClean, MipsLines),
 	mips_asm(MipsLines, MipsCode, MipsState).
 
-    lines([]) --> call(eos), !.
+    /* lines([]) --> call(eos), !.
     lines([L|Ls]) --> line(L), lines(Ls).
 
     line([]) --> ( "\n" | call(eos) ), !.
-    line([C|Cs]) --> [C], line(Cs).
+    line([C|Cs]) --> [C], line(Cs). */
 
     eos([], []).
 

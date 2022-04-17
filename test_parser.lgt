@@ -1,4 +1,4 @@
-:- object(test_registers, extends(lgtunit)).
+:- object(test_parser, extends(lgtunit)).
 
 test(register_value_zero, true(X == 0)) :-
     initial_registers(R),
