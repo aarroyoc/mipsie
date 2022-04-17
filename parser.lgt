@@ -1,26 +1,34 @@
+:- use_module(library(assoc)).
+:- use_module(library(charsio)).
+:- use_module(library(pio)).
+:- use_module(library(dcgs)).
+
 :- object(parser).
 
     :- public(parse/3).
     parse(Filename, MipsCode, MipsState) :-
-        phrase_from_file(lines(MipsCodeLines), Filename),
+        pio:phrase_from_file(lines(MipsCodeLines), Filename),
 	meta::map(no_comment_line, MipsCodeLines, MipsCodeLinesClean),
 	filter_empty_lines(MipsCodeLinesClean, MipsLines),
 	mips_asm(MipsLines, MipsCode, MipsState).
 
-    /* lines([]) --> call(eos), !.
+    (... ) --> dcgs:(... ).
+    seq(X) --> dcgs:seq(X).
+
+    lines([]) --> call(eos), !.
     lines([L|Ls]) --> line(L), lines(Ls).
 
     line([]) --> ( "\n" | call(eos) ), !.
-    line([C|Cs]) --> [C], line(Cs). */
+    line([C|Cs]) --> [C], line(Cs).
 
     eos([], []).
 
     no_comment_line(L0, L) :-
-	member(#, L0),
+	list::member(#, L0),
 	phrase((seq(L), "#"), L0, _).
 
     no_comment_line(L, L) :-
-	\+ member(#, L).
+	\+ list::member(#, L).
 
     filter_empty_lines([], []).
     filter_empty_lines([L|Ls0], Ls) :-
@@ -39,10 +47,10 @@
 	mips_text(TextLines, Code).
 
     merge_assoc(LS0, LS1, LS) :-
-	assoc_to_list(LS0, LS0s),
-	assoc_to_list(LS1, LS1s),
-	append(LS0s, LS1s, LSs),
-	list_to_assoc(LSs, LS).
+	assoc:assoc_to_list(LS0, LS0s),
+	assoc:assoc_to_list(LS1, LS1s),
+	list::append(LS0s, LS1s, LSs),
+	assoc:list_to_assoc(LSs, LS).
 
     extract_data_lines([], []).
     extract_data_lines([L|Lines], DataLines) :-
@@ -76,26 +84,26 @@
 	add_declaration_state(Declaration, State0, State).
 
     add_declaration_state(asciiz(Label, String), mips_state(R, PC, M0, L0), mips_state(R, PC, M, L)) :-
-	append(M0, String, M1),
-	append(M1, "\x0\", M),
-	length(M0, Addr),
-	put_assoc(Label, L0, Addr, L).
+	list::append(M0, String, M1),
+	list::append(M1, "\x0\", M),
+	list::length(M0, Addr),
+	assoc:put_assoc(Label, L0, Addr, L).
 
     add_declaration_state(word(Label, Values), mips_state(R, PC, M0, L0), mips_state(R, PC, M, L)) :-
 	phrase(words_bytes(Values), Bytes),
-	append(M0, Bytes, M),
-	length(M0, Addr),
-	put_assoc(Label, L0, Addr, L).
+	list::append(M0, Bytes, M),
+	list::length(M0, Addr),
+	assoc:put_assoc(Label, L0, Addr, L).
 
     add_declaration_state(byte(Label, Values), mips_state(R, PC, M0, L0), mips_state(R, PC, M, L)) :-
-	append(M0, Values, M),
-	length(M0, Addr),
-	put_assoc(Label, L0, Addr, L).
+	list::append(M0, Values, M),
+	list::length(M0, Addr),
+	assoc:put_assoc(Label, L0, Addr, L).
 
     add_declaration_state(space(Label, Values), mips_state(R, PC, M0, L0), mips_state(R, PC, M, L)) :-
-	append(M0, Values, M),
-	length(M0, Addr),
-	put_assoc(Label, L0, Addr, L).
+	list::append(M0, Values, M),
+	list::length(M0, Addr),
+	assoc:put_assoc(Label, L0, Addr, L).
 
     % mips_state is defined as
     %    Registers
@@ -103,8 +111,8 @@
     %    Memory
     %    Label-Memory
     default_mips_state(mips_state(R, 0, [], LabelStore)) :-
-	register_value(R, '$zero', _),
-	empty_assoc(LabelStore).
+	registers::value(R, '$zero', _),
+	assoc:empty_assoc(LabelStore).
 
     words_bytes([]) --> [].
     words_bytes([W|Words]) -->
@@ -158,7 +166,7 @@
 	number(N),
 	end_line,
 	{
-	    length(Values, N)
+	    list::length(Values, N)
 	}.
 
     values([V]) --> number(V).
@@ -182,7 +190,7 @@
     mips_label_text(TextLines, LS) :-
 	mips_label_text(TextLines, 0, LS).
     mips_label_text([], _, LS) :-
-	empty_assoc(LS).
+	assoc:empty_assoc(LS).
     mips_label_text([Line|TextLines], N, LS) :-
 	(
 	    phrase(((whites | []), string(Label), ":", end_line ), Line) ->
@@ -190,7 +198,7 @@
 	;   phrase(((whites | []), string(Label), ":", ... ), Line) -> (N1 is N + 1, PC = N); (N1 is N + 1)
 	),
 	mips_label_text(TextLines, N1, LS0),
-	(\+ var(PC) -> put_assoc(Label, LS0, PC, LS) ; LS0 = LS).
+	(nonvar(PC) -> assoc:put_assoc(Label, LS0, PC, LS) ; LS0 = LS).
 
     mips_text([], []).
     mips_text([Line|TextLines], [Instruction|Code]) :-
@@ -428,7 +436,7 @@
     number_([D|Ds]) --> digit(D), number_(Ds).
     number_([D]) --> digit(D).
 
-    digit(D) --> [D], { char_type(D, decimal_digit) }.
+    digit(D) --> [D], { charsio:char_type(D, decimal_digit) }.
 
     optional_label --> whites.
     optional_label --> ..., ":", whites.
@@ -465,8 +473,8 @@
     address(Label, 0, '$zero') -->
 	string(Label),
 	{
-	    \+ member(+, Label),
-	    \+ member('(', Label)
+	    \+ list::member(+, Label),
+	    \+ list::member('(', Label)
 	}.
 
     comma -->
@@ -477,7 +485,7 @@
     white_char -->
 	[X],
 	{
-	    member(X, " \t")
+	    list::member(X, " \t")
 	}.
     whites --> white_char.
     whites -->
@@ -487,8 +495,8 @@
     string(X) -->
 	seq(X),
 	{
-	    \+ member(' ', X),
-	    \+ member('\t', X)
+	    \+ list::member(' ', X),
+	    \+ list::member('\t', X)
 	}.
 
     end_line --> ( whites | []).
